@@ -197,12 +197,158 @@ function formatFormatAggregations(rows, currency) {
   return headerLine + '\n' + rowLines.join('\n') + '\n' + footer;
 }
 
-// ─── EXPORTS ─────────────────────────────────────────────────────────────────
-// Subsequent chunks add: formatCreative, buildAnalysisPrompt,
-// buildCreativeReasoningPrompt, buildCreativeStructuringPrompt, buildBriefPrompt.
+// ─── formatCreative ──────────────────────────────────────────────────────────
 //
-// This commit intentionally contains helpers only so the review surface stays
-// small. The worker-facing functions land in the next chunks.
+// Renders one of this-week's ads as a block for the data-block passed to the
+// reasoning call. Structurally identical to v1's formatter — shape is
+// preserved so the reasoning call reads the same familiar layout for
+// this-week's creatives. The 90-day history is rendered separately by
+// formatCreativeHistory above.
+//
+function formatCreative(c, currency, index) {
+  const f       = c.fields || {};
+  const spend   = parseFloat(f.spend) || 0;
+  const roas    = parseFloat(f.roas) || 0;
+  const cpa     = parseFloat(f.cpl) || 0;
+  const isVideo = ['reel', 'video', 'story'].includes(f.ad_format);
+
+  const lines = [
+    'AD ' + (index + 1) + ': ' + (f.ad_name || 'Unnamed'),
+    'Format: ' + (f.ad_format || 'unknown') +
+      ' | Spend: ' + spend + ' ' + currency +
+      ' | ROAS: ' + (roas || 'n/a') +
+      ' | Purchases: ' + (f.purchases ?? 'n/a') +
+      ' | Leads: ' + (f.leads ?? 'n/a') +
+      ' | CPL: ' + (cpa || 'n/a'),
+  ];
+
+  if (f.hook_text)    lines.push('Hook: '        + sanitise(f.hook_text).slice(0, 150));
+  if (f.ad_copy)      lines.push('Copy: '        + sanitise(f.ad_copy).slice(0, 200) +
+                                 (sanitise(f.ad_copy).length > 200 ? '...' : ''));
+  if (f.headline)     lines.push('Headline: '    + sanitise(f.headline).slice(0, 150));
+  if (f.visual_text)  lines.push('Visual text: ' + sanitise(f.visual_text).slice(0, 150));
+  if (f.image_tags)   lines.push('Visual tags: ' + sanitise(f.image_tags).slice(0, 200));
+  if (f.fatigue_flag) lines.push('FATIGUE FLAG: this ad is showing signs of creative fatigue');
+
+  if (isVideo) {
+    if (f.video_duration)      lines.push('Video duration: ' + f.video_duration + 's');
+    if (f.video_plays_p25 != null) {
+      lines.push(
+        'Retention: 25%=' + f.video_plays_p25 +
+        ' | 50%='  + (f.video_plays_p50  ?? 'n/a') +
+        ' | 75%='  + (f.video_plays_p75  ?? 'n/a') +
+        ' | 100%=' + (f.video_plays_p100 ?? 'n/a') +
+        ' | Thruplay=' + (f.video_thruplay ?? 'n/a')
+      );
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ─── buildAnalysisPrompt ─────────────────────────────────────────────────────
+//
+// Assembles the data block passed into the reasoning call (and echoed for
+// reference into the structuring call). v1 returned `{ systemPrompt,
+// userMessage }` but only userMessage was ever consumed — the rest of the
+// three-call architecture does the actual prompt work. v2 simplifies the
+// signature to return a single string: the data block itself.
+//
+// Inputs:
+//   - companyName, adAccountId, weekEnding, currency           (account id)
+//   - objective, aov, breakEvenROAS, targetCPA                 (client profile)
+//   - primaryGeo                                               (client profile)
+//   - seasonTags                                               (from baseline)
+//   - seasonStatus                                             (upcoming/active/recently_ended/past)
+//   - analysable                                               (this week's ads >= MIN spend)
+//   - thinData                                                 (this week's ads < MIN spend)
+//   - baseline                                                 (Airtable baseline_current row fields)
+//   - creativeHistory                                          (90-day array, Design Brief §7.4)
+//   - formatAggregations                                       (pre-computed rows, §7.1)
+//   - baselineContext                                          (D1 row: sufficiency flags, season)
+//
+// What v2 adds vs v1:
+//   1. CREATIVE HISTORY block (last 90 days, top by spend, >= MIN_SPEND)
+//   2. FORMAT PERFORMANCE block (pre-computed aggregate)
+//   3. SUFFICIENCY FLAGS block (so the reasoning call knows which windows
+//      are safe to reference and which are still being established)
+//
+function buildAnalysisPrompt({
+  companyName, adAccountId, weekEnding, currency,
+  objective, aov, breakEvenROAS, targetCPA,
+  primaryGeo, seasonTags, seasonStatus,
+  analysable, thinData, baseline,
+  creativeHistory, formatAggregations, baselineContext,
+}) {
+
+  const baselineBlock = baseline ? (
+    'ACCOUNT BASELINE (' + companyName + ' normal in ' + currency + '):\n' +
+    '- ROAS median: ' + (baseline.roas_4w_median ?? 'n/a') +
+      ' | p25: ' + (baseline.roas_4w_p25 ?? 'n/a') +
+      ' | p75: ' + (baseline.roas_4w_p75 ?? 'n/a') + '\n' +
+    '- CPA median: '  + (baseline.cpa_4w_median ?? 'n/a') + ' ' + currency + '\n' +
+    '- CTR median: '  + (baseline.ctr_4w_median ?? 'n/a') + '%\n' +
+    '- Trend: '       + (baseline.trend_direction ?? 'unknown')
+  ) : 'ACCOUNT BASELINE: not yet available.';
+
+  // D1 sufficiency flags gate which windows the analyst may reference.
+  // Mirrors Step 6 v2's approach. When baselineContext is null (D1 miss or
+  // binding absent) the reasoning call is told every window is insufficient
+  // and defaults to the Airtable baseline above.
+  const sufficiency = {
+    '4w':           baselineContext?.sufficiency_4w           || 'insufficient',
+    '12w':          baselineContext?.sufficiency_12w          || 'insufficient',
+    'lifetime':     baselineContext?.sufficiency_lifetime     || 'insufficient',
+    'seasonal_yoy': baselineContext?.sufficiency_seasonal_yoy || 'insufficient',
+  };
+  const sufficiencyBlock =
+    'BASELINE SUFFICIENCY (from D1):\n' +
+    '- 4-week:              ' + sufficiency['4w'] + '\n' +
+    '- 12-week:             ' + sufficiency['12w'] + '\n' +
+    '- Lifetime:            ' + sufficiency['lifetime'] + '\n' +
+    '- Seasonal YoY:        ' + sufficiency['seasonal_yoy'] + '\n' +
+    'Never cite a window flagged "insufficient". When flagged "partial", hedge explicitly.';
+
+  const thisWeekBlocks = (analysable || [])
+    .map((c, i) => formatCreative(c, currency, i))
+    .join('\n\n---\n\n');
+
+  const thinBlock = (thinData && thinData.length > 0)
+    ? '\n\nINSUFFICIENT SPEND (below ' + MIN_SPEND_FOR_ANALYSIS + ' ' + currency + '):\n' +
+      thinData.map(c =>
+        '- ' + (c.fields.ad_name || 'Unnamed') + ': ' + (c.fields.spend ?? 0) + ' ' + currency + ' spend'
+      ).join('\n')
+    : '';
+
+  const historyBlock = formatCreativeHistory(creativeHistory || [], currency);
+  const formatBlock  = formatFormatAggregations(formatAggregations || [], currency);
+
+  const header =
+    'Analyse Meta ad creatives for ' + companyName + ' (' + adAccountId + '):\n\n' +
+    'Week ending: ' + weekEnding + '\n' +
+    'Currency: ' + currency + '\n' +
+    'Objective: ' + objective + '\n' +
+    'Geography: ' + primaryGeo + '\n' +
+    'Season: '   + seasonTags + ' (status: ' + (seasonStatus || 'unknown') + ')\n' +
+    (aov           ? 'AOV: '             + aov           + ' ' + currency + '\n' : '') +
+    (breakEvenROAS ? 'Break-even ROAS: ' + breakEvenROAS + '\n' : '') +
+    (targetCPA     ? 'Target CPA: '      + targetCPA     + ' ' + currency + '\n' : '');
+
+  return (
+    header + '\n' +
+    baselineBlock + '\n\n' +
+    sufficiencyBlock + '\n\n' +
+    historyBlock + '\n\n' +
+    formatBlock + '\n\n' +
+    'CREATIVES THIS WEEK:\n\n' +
+    thisWeekBlocks +
+    thinBlock
+  );
+}
+
+// ─── EXPORTS ─────────────────────────────────────────────────────────────────
+// Subsequent chunks add: buildCreativeReasoningPrompt,
+// buildCreativeStructuringPrompt, buildBriefPrompt.
 
 export {
   PATTERNS_JSON_DELIMITER,
@@ -211,6 +357,8 @@ export {
   HISTORY_MAX_ADS_DEFAULT,
   PATTERN_SUFFICIENCY,
   sanitise,
+  formatCreative,
   formatCreativeHistory,
   formatFormatAggregations,
+  buildAnalysisPrompt,
 };
