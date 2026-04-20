@@ -437,8 +437,196 @@ Produce only the 3 to 5 paragraphs of analytical thinking. No headings, no bulle
   };
 }
 
+// ─── buildCreativeStructuringPrompt (CALL B) ─────────────────────────────────
+//
+// Takes the reasoning call's prose and produces the combined output the
+// worker writes to Airtable:
+//
+//   [plain-text Scale / Consider Pausing / Watch Closely / Insufficient Data
+//    / Key Insight / Recommended Action — v1 format preserved bit-exact]
+//   ===PATTERNS_JSON===
+//   {"creative_pattern_observations": [...], "forward_preparation": "..." | null}
+//
+// The worker splits on the sentinel line. Everything before → existing
+// creative_analysis Airtable field (unchanged frontend contract). Everything
+// after → parsed as JSON for the two new fields.
+//
+// v1 contract preserved:
+//   - Section headers: SCALE THESE / CONSIDER PAUSING / WATCH CLOSELY /
+//     INSUFFICIENT DATA / KEY INSIGHT / RECOMMENDED ACTION
+//   - Up to 3 ads per section, "Spend: X | <metric>" line, "Why: ..." line
+//   - Metric string chosen by objective (isLeadGen / isSales / traffic)
+//
+// v2 additions:
+//   - "Why" sentences are analyst voice and reference the 90-day history
+//     where applicable
+//   - Appended sentinel + JSON tail with creative_pattern_observations
+//     (0-3 entries, each gated by sufficiency) and forward_preparation
+//     (string or null)
+//
+// Params:
+//   currency, isLeadGen, isSales, minSpend      (metric + threshold framing)
+//   sufficiency                                 (4w/12w/lifetime/seasonal_yoy flags)
+//   historyCount                                (number of 90-day ads passed in)
+//   seasonTags, seasonStatus                    (from D1 / baseline)
+//
+function buildCreativeStructuringPrompt(reasoning, dataBlock, params) {
+  const {
+    currency,
+    isLeadGen,
+    isSales,
+    minSpend,
+    sufficiency = {},
+    historyCount = 0,
+    seasonTags = '',
+    seasonStatus = '',
+  } = params;
+
+  const metric = isSales
+    ? 'ROAS: X | Purchases: X'
+    : isLeadGen
+      ? 'Leads: X | CPL: X'
+      : 'Clicks: X | CPC: X';
+
+  // Pattern observations are only defensible if the 90-day history is deep
+  // enough. Gate in the prompt so an honest "not yet" is preferred over a
+  // fabricated pattern. Gate thresholds come from PATTERN_SUFFICIENCY.
+  const historyThin = historyCount < PATTERN_SUFFICIENCY.hookStyleMinAds;
+
+  const sufficiencyLine =
+    '4w=' + (sufficiency['4w'] || 'unknown') +
+    ', 12w=' + (sufficiency['12w'] || 'unknown') +
+    ', lifetime=' + (sufficiency['lifetime'] || 'unknown') +
+    ', seasonal_yoy=' + (sufficiency['seasonal_yoy'] || 'unknown');
+
+  const systemString = `You are structuring a senior creative strategist's analysis into a specific format. The reasoning has already been done — extract the findings and present them clearly. Do not add new conclusions. Do not pad. Preserve the honesty and specificity of the original thinking.
+
+## VOICE — analyst voice on framing text
+Every "Why" line, the Key Insight, the Recommended Action, and every pattern observation must be analyst voice:
+- Observational, not directive.
+- Specific numbers with context.
+- Hypothesis-plural when causation is uncertain ("this typically points to A, B, or C").
+- "Has consistently performed" not "proves X resonates".
+- Reference 90-day history patterns where relevant (a theme, a format, a hook style that the account has repeatedly seen).
+- British English throughout.
+- Never use em dashes (--, —). Use full stops or commas.
+- Numbers only. Never £, $, €, ﷼ or any currency symbol. Write "379 ${currency}", not "£379".
+- No motivational language. No sales framing. No unhedged imperatives.
+
+## SUFFICIENCY AWARENESS
+Baseline sufficiency this week: ${sufficiencyLine}.
+Creative history depth: ${historyCount} ad(s) at or above the ${minSpend} ${currency} spend threshold in the last ${HISTORY_WINDOW_DAYS} days.
+- Never cite a baseline window flagged 'insufficient'. Hedge when flagged 'partial'.
+- ${historyThin
+    ? 'Creative history is below the ' + PATTERN_SUFFICIENCY.hookStyleMinAds +
+      '-ad threshold for hook-style and visual-theme patterns. Most pattern observations should be omitted this week. An honest "not yet" is preferred over a fabricated pattern.'
+    : 'Creative history is deep enough that at least one pattern observation should be surfaced — but only if the 90-day history in the reasoning genuinely supports one.'}
+
+## COLD-START LANGUAGE — HARD RULE
+Do not use "first week", "new account", "early days", or any equivalent unless the 90-day history is genuinely empty. An account with ${historyCount} historical creatives is not new; a quiet current week is not the same as a new account.
+
+## FEW-SHOT EXAMPLES — analyst voice
+
+SCALE THESE example (pattern-aware):
+Party Shop destination video
+Spend: 420 | ROAS: 11.4 | Purchases: 9
+Why: Third occasion-led video above 8x ROAS this quarter, extending a pattern the account has seen repeatedly across gifting-moment campaigns. Hook retention at 38 per cent is above your 4-week p75.
+
+CONSIDER PAUSING example (specific, non-causation):
+Laduree still
+Spend: 130 | ROAS: 1.2 | Purchases: 1
+Why: Well past the ${minSpend} ${currency} reliable-data threshold with only 1 purchase. At 1.2 ROAS the creative is below your 4-week p25 of 2.8, and reallocation to the current occasion-led winner is a reasonable next step.
+
+WATCH CLOSELY example (hedged):
+New UGC clip
+Spend: 85 | ROAS: 3.8 | Purchases: 2
+Why: Promising at this spend level but 2 purchases is not yet enough to be confident. Another week of data is a sensible next step.
+
+## OUTPUT — TWO PARTS
+
+PART 1: plain text, no markdown, exactly this structure (the frontend parses this):
+
+SCALE THESE
+
+[Ad name]
+Spend: X | ${metric}
+Why: [Analyst-voice sentence citing a data point, and where supported, the 90-day pattern it belongs to]
+
+[Up to 3 ads]
+
+
+CONSIDER PAUSING
+
+[Ad name]
+Spend: X | ${metric}
+Why: [Analyst-voice sentence on why — reference the number and hedge the cause]
+
+[Up to 3 ads]
+
+
+WATCH CLOSELY
+
+[Ad name]
+Spend: X | ${metric}
+Why: [Promising but needs more data — be specific, no unhedged imperatives]
+
+[Up to 3 ads — omit entirely if none]
+
+
+INSUFFICIENT DATA
+
+[Ads below ${minSpend} ${currency} spend — one line each]
+
+
+KEY INSIGHT
+
+[One analyst-voice sentence. Pattern-aware where the 90-day history supports it. Observational, not directive.]
+
+
+RECOMMENDED ACTION
+
+[One specific, immediately testable next step. Name the actual ad and the actual action. Present it as a reasonable next step, not a command.]
+
+PART 2: on a new line, emit the sentinel exactly as shown, followed by a single JSON object on the following line(s). No text after the JSON object. No markdown fences.
+
+${PATTERNS_JSON_DELIMITER}
+{"creative_pattern_observations":[{"title":"...","detail":"...","pattern_type":"hook_style"}],"forward_preparation":"..."}
+
+## JSON RULES
+- creative_pattern_observations: array of 0 to 3 objects. Each object has exactly these three string fields:
+    title        — short title (under 10 words)
+    detail       — 2 to 4 sentences, analyst voice, grounded in specific history. No em dashes. No currency symbols.
+    pattern_type — one of: hook_style, format_performance, video_retention, visual_theme, fatigue_curve, cross_metric
+- Surface a pattern only when the 90-day history in the reasoning genuinely supports it. Sufficiency gates:
+    hook_style         requires ${PATTERN_SUFFICIENCY.hookStyleMinAds}+ historical creatives with hook_text
+    format_performance requires ${PATTERN_SUFFICIENCY.formatMinPerGroup}+ examples of each format compared
+    video_retention    requires ${PATTERN_SUFFICIENCY.videoRetentionMin}+ video creatives in history
+    visual_theme       requires ${PATTERN_SUFFICIENCY.visualThemeMinAds}+ creatives with image_tags
+    fatigue_curve      requires ${PATTERN_SUFFICIENCY.fatigueCurveMinAds}+ creatives with fatigue data
+    cross_metric       requires both creative-level and funnel-level data for the same weeks
+- If a gate is not met, omit that pattern. Do not fabricate. An invented pattern is worse than an absent pattern.
+- forward_preparation: a string or null. Populate only when there is a meaningful forward-facing creative observation — for example an upcoming season worth briefing for, a fatigue cycle about to hit, a pattern about to become trackable. Use null when there is nothing forward-facing to say. Never use it as filler. 1 or 2 sentences.
+- Season context this week: tags="${seasonTags || '(none)'}", status="${seasonStatus || 'unknown'}". If status is 'upcoming' and the season is within about six weeks, forward_preparation is a strong candidate.
+- JSON only. No comments. No trailing commas. Do not wrap in markdown fences. Nothing after the closing brace.
+
+## EXTRACTION RULES
+- Extract only what is in the reasoning. Name actual ads. Every Why references a specific number.
+- If the reasoning is quiet on a section (e.g. nothing to scale), write the section header and leave the body empty rather than inventing.
+- Do not restate the reasoning verbatim — compress to the Why line per ad.`;
+
+  const userString = 'Here is the strategist\'s thinking:\n\n' +
+    reasoning +
+    '\n\nData for reference:\n\n' +
+    dataBlock +
+    '\n\nNow produce PART 1 (plain text per the format above), then on a new line the sentinel ' +
+    PATTERNS_JSON_DELIMITER +
+    ', then PART 2 (the JSON object) on the line(s) after. No text after the JSON object.';
+
+  return { system: systemString, user: userString };
+}
+
 // ─── EXPORTS ─────────────────────────────────────────────────────────────────
-// Subsequent chunks add: buildCreativeStructuringPrompt, buildBriefPrompt.
+// Subsequent chunks add: buildBriefPrompt.
 
 export {
   PATTERNS_JSON_DELIMITER,
@@ -452,4 +640,5 @@ export {
   formatFormatAggregations,
   buildAnalysisPrompt,
   buildCreativeReasoningPrompt,
+  buildCreativeStructuringPrompt,
 };
