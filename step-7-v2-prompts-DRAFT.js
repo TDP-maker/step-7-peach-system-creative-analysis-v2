@@ -645,20 +645,27 @@ function formatCreativePatterns(patterns) {
   return 'PATTERN OBSERVATIONS (from this account\'s 90-day history):\n\n' + lines.join('\n\n');
 }
 
-// ─── buildBriefPrompt (CALL C) — CHUNK A5a: scaffolding ──────────────────────
+// ─── buildBriefPrompt (CALL C) ───────────────────────────────────────────────
 //
-// Brief generation. v1's brand-tone system is the single strongest piece of
-// craft in the worker and must be preserved bit-exact; it lands in chunk A5b
-// at the BRAND_TONE_RULES_HERE placeholder below. Chunk A5c adds the output
-// JSON shape and the rules with analyst-voice + pattern-grounded
-// why_it_works.
+// Brief generation. v1's brand-tone system (eight tones, bit-exact) is
+// preserved verbatim in the brandToneRules chain below — Design Brief §12.6
+// locks this as the single strongest piece of craft in the worker.
 //
-// v2 additions to the signature:
-//   - creativePatternObservations (array) — parsed from the structuring call's
-//     JSON tail. Rendered via formatCreativePatterns so the brief generator
-//     can ground why_it_works in account-specific patterns (Design Brief §4.7).
+// v2 additions vs v1:
+//   - Signature: creativePatternObservations (array from the structuring
+//     call's JSON tail) — rendered via formatCreativePatterns so the brief
+//     generator can ground why_it_works in account-specific 90-day patterns
+//     (Design Brief §4.7).
+//   - System prompt: explicit "two voices in one brief" rule — creative
+//     voice for hook / subheadline / visual_concept / copy_body / cta;
+//     analyst voice for why_it_works and format_adaptations.
+//   - JSON output: why_it_works shifts from v1's single-sentence assertion
+//     ("proving this theme resonates") to a 2-4 sentence analyst-voice
+//     pattern-grounded paragraph.
 //
-// Everything else in the signature is v1-equivalent.
+// The hook guidance (five hook styles with per-style examples) is preserved
+// bit-exact from v1 — Design Brief §2.8 instructs us to extend hook
+// variety, never to reduce it.
 //
 function buildBriefPrompt({
   companyName, objective, currency, aov, seasonTags, seasonStatus, brandTone,
@@ -791,7 +798,55 @@ Brand tone: ${brandTone || 'warm'}
 
 ${brandToneRules}
 
-BRIEF_RULES_AND_OUTPUT_HERE`;
+## RULES
+- Generate exactly 3 briefs
+- Each brief must take a distinct creative direction — no two can share the same hook style or visual approach
+- Base every direction on insights from the analysis above AND, where relevant, on the 90-day PATTERN OBSERVATIONS block above. Cite the specific insight or pattern that supports it.
+- If the analysis flags something as underperforming, do NOT use that approach
+- If a pattern observation shows a style or format consistently underperforms for this account, do NOT brief that direction
+- Be designer-ready and copywriter-ready — specific enough to execute without a briefing call
+- No asterisks, no markdown, no emojis unless analysis shows they performed well
+- British English only
+
+## OUTPUT — VALID JSON ONLY
+No markdown fences, no preamble. Return exactly this structure:
+
+{
+  "briefs": [
+    {
+      "concept_name": "Short internal name for the creative team",
+      "hook": "Opening line — max 10 words or 3 seconds of video. Study the brand, the top-performing ads, the product type, the season, and the audience carefully before writing. The hook must feel like it was written specifically for this brand and this moment — not a generic template. There are several hook styles available — choose the one that fits the brand energy and brief concept: (1) ASPIRATIONAL — creates desire or captures a feeling: 'She still talks about that birthday.' / 'This is what celebrations should feel like.' / 'Because some moments deserve more than ordinary.' (2) OCCASION/URGENCY — ties to a real moment in the audience's life: 'Eid is almost here.' / 'One week. One celebration. Make it count.' (3) WORDPLAY/PUNS — playful and memorable, especially powerful for celebration, lifestyle, food, and seasonal brands. A well-crafted pun stops the scroll through delight. Match the pun to the occasion and the product: for balloons on Mother's Day 'Surprise her with a pop of love.' For Easter party supplies 'Egg-citing party essentials are here.' For Eid 'Make it Eid-tastic.' For a birthday balloon bar 'Let's get this party pop-ping.' (4) IDENTITY — speaks to who they are: 'For the mum who makes every moment magical.' / 'You're the one who makes it special.' (5) SOCIAL PROOF/CURIOSITY — creates intrigue: 'This is Qatar's most gifted balloon arrangement.' The hook is about the AUDIENCE and their world — never about the business. The brand must not appear in the hook. Weak hooks lead with problems, stress, or negativity — these are almost always wrong for celebration brands. Ask: does this make someone smile, feel something, or think — that is exactly me?",
+      "subheadline": "Supporting line max 15 words, or empty string if not needed",
+      "visual_concept": "What the viewer sees — scene, style, motion, framing. Be specific. Base on image_tags and visual data from top-performing ads. Creative voice.",
+      "copy_body": "Main ad text — max 125 characters. Creative voice.",
+      "cta": "Button label and optional supporting caption. Creative voice.",
+      "format_adaptations": "ANALYST VOICE. Feed (1080x1080): how the visual reframes in square. Stories/Reels (1080x1920): how it reframes for vertical. Observational and specific, no em dashes, British English.",
+      "why_it_works": "ANALYST VOICE. Two to four sentences grounding this brief in the analysis and, where relevant, in the 90-day pattern observations. Reference account-specific patterns by name where applicable (e.g. 'Occasion-led carousels have consistently been your strongest format across the last 12 weeks, averaging 5.8 ROAS compared to 2.1 for feature-led creative. This brief tests the same pattern with a sharper gifting focus.'). When no relevant pattern exists, reference a specific finding from the analysis — name the actual ad or metric. Observational not assertive. Hypothesis-plural when causation is uncertain. 'Has consistently performed' not 'proves X resonates'. British English. No em dashes. No currency symbols."
+    },
+    { "same structure for brief 2" },
+    { "same structure for brief 3" }
+  ]
+}
+
+RULES:
+- Exactly 3 objects in the briefs array — no more, no less
+- why_it_works and format_adaptations are ANALYST VOICE. Observational, grounded in the analysis or pattern observations. No 'proves X resonates' language. No em dashes. No currency symbols. British English.
+- why_it_works must reference either a specific finding from the analysis (naming actual ad names or metrics) OR a specific entry from the PATTERN OBSERVATIONS block above. No generic statements.
+- If PATTERN OBSERVATIONS says 'none surfaced this week', why_it_works grounds only in the analysis — do NOT fabricate a pattern.
+- visual_concept must be grounded in image_tags or visual elements from the analysis — do not invent visual styles not evidenced in the data
+- copy_body must be 125 characters or fewer
+- hook must be 10 words or fewer
+- hook must be written specifically for this brand, audience, product, and season — never a generic template
+- hook must NEVER mention the brand name or business
+- choose the right hook style for the brief: aspirational, occasion/urgency, wordplay/pun, identity, or curiosity
+- for celebration, lifestyle, seasonal, and gifting brands — consider wordplay and puns seriously. A clever pun stops the scroll through delight and is more memorable than a generic statement
+- seasonal puns work especially well: match the wordplay to the occasion and the product category
+- hooks that lead with negativity, stress, or problems are almost always wrong for celebration brands
+- urgency hooks must come from the audience's life — an occasion, a date — not from stock or sales pressure
+- ask: does this make someone smile, feel something, or think 'that is exactly me'?
+- if the hook could run for any brand in any category, it is not specific enough — rewrite it
+- No currency symbols — numbers only
+- British English throughout`;
 
   const userMessage = 'Based on this creative performance analysis for ' + companyName + ', generate three creative briefs:\n\n' + analysisText;
 
