@@ -712,9 +712,25 @@ COPY RULES: Conversational, upbeat, warm. Short punchy sentences. Emojis accepta
     brandToneRules = `BOLD BRAND. Direct, confident, no-nonsense. Makes strong statements.
 HOOK RULES: Short, punchy, declarative. No hedging. 'This changes everything.' / 'You've been doing it wrong.' / 'Stop settling.'
 COPY RULES: Short sentences. Active voice. Strong verbs. No fluff.`;
+  } else if (brandTone === 'professional') {
+    brandToneRules = `PROFESSIONAL BRAND. Credible, authoritative, trustworthy. Often B2B or considered-purchase categories.
+HOOK RULES: Lead with credibility, results, or expertise. No puns. No casual language. 'The only solution your team needs.' / 'Trusted by 500 companies across the UAE.'
+COPY RULES: Clear, factual, benefit-focused. Professional but not cold.`;
+  } else if (brandTone === 'aspirational') {
+    brandToneRules = `ASPIRATIONAL BRAND. Sits between warm and premium — lifestyle, mid-tier fashion, travel, home décor, wellness. The brand sells an elevated version of the audience's life.
+HOOK RULES: Paint a picture of the life they want. Hooks should make people think 'I want to feel like that.' No puns. No hard sell. 'This is the life.' / 'You deserve this.' / 'The version of you that has this.' / 'Some things are worth it.'
+COPY RULES: Evocative, sensory language. Paint scenes not features. Short sentences that breathe. Confident but not cold.`;
+  } else if (brandTone === 'cultural') {
+    brandToneRules = `CULTURAL BRAND. Community, heritage, tradition, and shared identity are central to this brand. Often relevant for Gulf market brands with deep cultural roots or brands targeting specific communities.
+HOOK RULES: Speak to shared values, traditions, and moments of collective identity. Hooks should feel like they come from inside the community. 'For the family that celebrates together.' / 'Eid is more than a day. It's us.' / 'Rooted in tradition. Made for today.'
+COPY RULES: Warm, inclusive, community-first language. Reference shared cultural moments authentically. Never appropriative — must be genuinely relevant to the brand's audience.`;
+  } else if (brandTone === 'urgent' || brandTone === 'urgent/direct') {
+    brandToneRules = `URGENT/DIRECT BRAND. Performance-first. Every word earns its place. Drives action immediately. Often used for ecommerce flash sales, limited offers, lead generation, or high-conversion campaigns.
+HOOK RULES: Lead with the offer, the deadline, or the consequence of not acting. No fluff. 'Ends tonight.' / 'Only 12 left.' / 'Last chance to get this price.' / 'Your competitors are already using this.'
+COPY RULES: Short. Direct. One idea per sentence. Strong CTA. Numbers where possible. Urgency must feel real — fabricated urgency destroys trust.`;
   } else {
-    // Placeholder — remaining tones and warm/accessible default land in
-    // chunks A5b-ii and A5b-iii. Not wired into the worker yet.
+    // Placeholder — warm/accessible default lands in chunk A5b-iii. Not
+    // wired into the worker yet.
     brandToneRules = 'BRAND_TONE_REMAINDER_PLACEHOLDER';
   }
 
