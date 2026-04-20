@@ -729,9 +729,11 @@ COPY RULES: Warm, inclusive, community-first language. Reference shared cultural
 HOOK RULES: Lead with the offer, the deadline, or the consequence of not acting. No fluff. 'Ends tonight.' / 'Only 12 left.' / 'Last chance to get this price.' / 'Your competitors are already using this.'
 COPY RULES: Short. Direct. One idea per sentence. Strong CTA. Numbers where possible. Urgency must feel real — fabricated urgency destroys trust.`;
   } else {
-    // Placeholder — warm/accessible default lands in chunk A5b-iii. Not
-    // wired into the worker yet.
-    brandToneRules = 'BRAND_TONE_REMAINDER_PLACEHOLDER';
+    // Warm / accessible — the v1 default for any unmatched brand tone
+    // value. Bit-exact from v1.
+    brandToneRules = `WARM/ACCESSIBLE BRAND. Friendly, human, relatable. The majority of lifestyle and consumer brands.
+HOOK RULES: Emotional connection, aspiration, identity, and occasion-based hooks work well. Subtle wordplay is acceptable when brand-relevant — not forced puns. Celebratory and joyful energy.
+COPY RULES: Conversational but polished. Warm tone. Speaks to the person, not at them.`;
   }
 
   // Seasonal framing. v1 guidance preserved verbatim — this is voice and
