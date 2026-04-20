@@ -684,6 +684,40 @@ function buildBriefPrompt({
 
   const patternsBlock   = formatCreativePatterns(creativePatternObservations);
 
+  // Brand tone system — bit-exact from v1. Design Brief §12.6 locks this
+  // as the single strongest piece of craft in the worker. The if/else chain
+  // mirrors v1's ternary exactly; each branch's body is copied verbatim
+  // from v1 including the em dashes in the instructions (those appear in
+  // the PROMPT to the model, not in the model's framing output, and so are
+  // exempt from the analyst-voice "no em dashes" rule which applies to
+  // framing text).
+  //
+  // Chunks fill this in stages: A5b-i covers premium/luxury, playful, bold;
+  // A5b-ii covers professional, aspirational, cultural, urgent; A5b-iii
+  // covers the warm/accessible default. Until the final chunk lands, any
+  // unmatched tone falls through to the placeholder and is caught in
+  // testing — this function is not wired into the worker until the whole
+  // draft is complete.
+  let brandToneRules;
+  if (brandTone === 'premium' || brandTone === 'luxury' || brandTone === 'minimal') {
+    brandToneRules = `PREMIUM/LUXURY BRAND. This brand competes on exclusivity, quality, and aspiration. The creative must reflect that.
+HOOK RULES: No wordplay. No puns. No exclamation marks. No casual language. Hooks should be restrained, elegant, and aspirational. Fewer words carry more weight. Think: 'For moments that matter.' / 'Nothing ordinary. Ever.' / 'The art of celebration.'
+COPY RULES: Short sentences. Sophisticated vocabulary. No discount language. No urgency tactics. The brand speaks with quiet confidence, not excitement.
+NEVER: puns, exclamation marks, emoji, casual slang, price anchoring, countdown urgency.`;
+  } else if (brandTone === 'playful' || brandTone === 'fun') {
+    brandToneRules = `PLAYFUL BRAND. This brand's personality is fun, energetic, and joyful. Creative should reflect that energy.
+HOOK RULES: Wordplay and puns are strongly encouraged — especially for seasonal moments. Keep them clever and relevant to the product. Celebration, delight, and smiles are the goals.
+COPY RULES: Conversational, upbeat, warm. Short punchy sentences. Emojis acceptable if data shows they performed well. Brand voice is a friend, not a corporation.`;
+  } else if (brandTone === 'bold') {
+    brandToneRules = `BOLD BRAND. Direct, confident, no-nonsense. Makes strong statements.
+HOOK RULES: Short, punchy, declarative. No hedging. 'This changes everything.' / 'You've been doing it wrong.' / 'Stop settling.'
+COPY RULES: Short sentences. Active voice. Strong verbs. No fluff.`;
+  } else {
+    // Placeholder — remaining tones and warm/accessible default land in
+    // chunks A5b-ii and A5b-iii. Not wired into the worker yet.
+    brandToneRules = 'BRAND_TONE_REMAINDER_PLACEHOLDER';
+  }
+
   // Seasonal framing. v1 guidance preserved verbatim — this is voice and
   // market craft that should not be rewritten. Only the status-switching
   // wrapper is kept.
@@ -734,7 +768,10 @@ ${patternsBlock}
 
 Use these to ground why_it_works. When a pattern is relevant to a brief direction, reference it explicitly (e.g. "occasion-led carousels have consistently been your strongest format across the last 12 weeks, averaging 5.8 ROAS compared to 2.1 for feature-led creative"). If no pattern is relevant to a given brief, ground why_it_works in the specific finding from the analysis above. Do NOT invent patterns; if PATTERN OBSERVATIONS above says "none surfaced this week", ground briefs only in the analysis findings.
 
-BRAND_TONE_RULES_HERE
+## BRAND TONE — THIS OVERRIDES ALL HOOK AND COPY DECISIONS
+Brand tone: ${brandTone || 'warm'}
+
+${brandToneRules}
 
 BRIEF_RULES_AND_OUTPUT_HERE`;
 
