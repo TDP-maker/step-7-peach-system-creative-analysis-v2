@@ -625,8 +625,128 @@ ${PATTERNS_JSON_DELIMITER}
   return { system: systemString, user: userString };
 }
 
+// ─── formatCreativePatterns ──────────────────────────────────────────────────
+//
+// Renders the pattern observations (parsed from the structuring call's JSON
+// tail) as a short prose block the brief generator can ground its
+// why_it_works fields in. An empty array yields a clear "no patterns
+// surfaced" note so the brief generator does not hallucinate patterns.
+//
+function formatCreativePatterns(patterns) {
+  if (!Array.isArray(patterns) || patterns.length === 0) {
+    return 'PATTERN OBSERVATIONS: none surfaced this week. Ground briefs in the analysis findings above rather than invented patterns.';
+  }
+  const lines = patterns.map((p, i) => {
+    const title = (p && p.title)  ? String(p.title).trim()  : 'Untitled pattern';
+    const type  = (p && p.pattern_type) ? String(p.pattern_type).trim() : 'unspecified';
+    const body  = (p && p.detail) ? String(p.detail).trim() : '';
+    return 'P' + (i + 1) + ' [' + type + '] ' + title + '\n  ' + body;
+  });
+  return 'PATTERN OBSERVATIONS (from this account\'s 90-day history):\n\n' + lines.join('\n\n');
+}
+
+// ─── buildBriefPrompt (CALL C) — CHUNK A5a: scaffolding ──────────────────────
+//
+// Brief generation. v1's brand-tone system is the single strongest piece of
+// craft in the worker and must be preserved bit-exact; it lands in chunk A5b
+// at the BRAND_TONE_RULES_HERE placeholder below. Chunk A5c adds the output
+// JSON shape and the rules with analyst-voice + pattern-grounded
+// why_it_works.
+//
+// v2 additions to the signature:
+//   - creativePatternObservations (array) — parsed from the structuring call's
+//     JSON tail. Rendered via formatCreativePatterns so the brief generator
+//     can ground why_it_works in account-specific patterns (Design Brief §4.7).
+//
+// Everything else in the signature is v1-equivalent.
+//
+function buildBriefPrompt({
+  companyName, objective, currency, aov, seasonTags, seasonStatus, brandTone,
+  analysisText, clientProfile,
+  creativePatternObservations,
+}) {
+
+  const isLeadGen = /lead/i.test(objective);
+
+  const productType     = Array.isArray(clientProfile?.product_type)
+                            ? clientProfile.product_type.join(', ')
+                            : (clientProfile?.product_type || 'unknown');
+  const targetAudience  = Array.isArray(clientProfile?.target_audience)
+                            ? clientProfile.target_audience.join(', ')
+                            : (clientProfile?.target_audience || 'unknown');
+  const creativeFormats = Array.isArray(clientProfile?.creative_formats)
+                            ? clientProfile.creative_formats.join(', ')
+                            : (clientProfile?.creative_formats || 'all formats');
+  const offerType       = Array.isArray(clientProfile?.offer_type)
+                            ? clientProfile.offer_type.join(', ')
+                            : (clientProfile?.offer_type || 'unknown');
+  const purchaseSpeed   = clientProfile?.purchase_speed || 'unknown';
+
+  const patternsBlock   = formatCreativePatterns(creativePatternObservations);
+
+  // Seasonal framing. v1 guidance preserved verbatim — this is voice and
+  // market craft that should not be rewritten. Only the status-switching
+  // wrapper is kept.
+  const seasonalContextBlock = `## SEASONAL CONTEXT
+Current season: ${seasonTags || 'standard'} (Status: ${seasonStatus || 'active'})
+${seasonStatus === 'upcoming'
+  ? `SEASON UPCOMING: ${seasonTags} is approaching. At least one brief should prepare seasonal creative ready to launch at season start.`
+  : seasonStatus === 'active'
+    ? (/ramadan|eid/i.test(seasonTags || '')
+        ? `RAMADAN / EID WINDOW ACTIVE: This is one continuous campaign window — campaigns started in Ramadan carry through Eid al-Fitr. Write briefs that work across both periods. Urgency, generosity, celebration, and family themes perform strongly. At least one brief should leverage this seasonal context.`
+        : `HIGH-COMPETITION SEASON ACTIVE: At least one brief should be season-specific with a seasonal hook and offer angle.`)
+    : seasonStatus === 'recently_ended'
+      ? `SEASON RECENTLY ENDED (within 2 weeks): Do NOT write new seasonal briefs — they cannot be produced and tested in time. Instead, identify what worked during the season (hook angles, offer types, urgency cues, creative formats) and adapt those principles to evergreen creative that will perform year-round. In why_it_works, explicitly name the seasonal learning you are adapting.`
+      : ''}`;
+
+  const systemPrompt = `You are a senior Meta ads creative strategist at a digital marketing agency. You translate performance analysis and the account's 90-day creative patterns into three distinct, immediately actionable creative briefs for new Meta ads. British English throughout.
+
+## YOUR ROLE
+Write briefs a designer and copywriter can execute without asking questions. Be specific, visual, and ground every direction in the performance analysis and the pattern observations below. Never invent angles not supported by the analysis or patterns.
+
+## TWO VOICES IN ONE BRIEF — the rule
+Each brief contains two voices.
+- CREATIVE VOICE governs: hook, subheadline, visual_concept, copy_body, cta. Persuasive by design. Written for the audience, not the brand. Brand tone rules (below) apply here.
+- ANALYST VOICE governs: why_it_works and format_adaptations. Observational, grounded in the analysis and the 90-day pattern data. Specific numbers, hedged causation. British English. No em dashes. No currency symbols. "Has consistently performed" not "proves X resonates".
+
+If the text is going INTO a Meta ad, it is creative voice. If it is explaining the brief to the client, it is analyst voice.
+
+## OBJECTIVE
+${isLeadGen
+  ? 'LEAD GENERATION — briefs should focus on capturing contact details. CTAs should drive form fills, messages, or calls.'
+  : 'SALES / ECOMMERCE — briefs should drive purchase intent. CTAs should drive to product pages or checkout.'}
+
+## CURRENCY
+All numbers in ${currency}. Write figures as: 379 ${currency}. NEVER use £, $, €, ﷼ or any currency symbol. British English does not mean British pounds — the currency is ${currency}.
+
+${seasonalContextBlock}
+
+## CLIENT CONTEXT
+- Product type: ${productType}
+- Target audience: ${targetAudience}
+- Available formats: ${creativeFormats}
+- Offer type: ${offerType}
+- Purchase speed: ${purchaseSpeed}
+${aov ? `- AOV: ${aov} ${currency}` : ''}
+
+## 90-DAY PATTERN OBSERVATIONS — ground briefs here, not just this-week's top ad
+${patternsBlock}
+
+Use these to ground why_it_works. When a pattern is relevant to a brief direction, reference it explicitly (e.g. "occasion-led carousels have consistently been your strongest format across the last 12 weeks, averaging 5.8 ROAS compared to 2.1 for feature-led creative"). If no pattern is relevant to a given brief, ground why_it_works in the specific finding from the analysis above. Do NOT invent patterns; if PATTERN OBSERVATIONS above says "none surfaced this week", ground briefs only in the analysis findings.
+
+BRAND_TONE_RULES_HERE
+
+BRIEF_RULES_AND_OUTPUT_HERE`;
+
+  const userMessage = 'Based on this creative performance analysis for ' + companyName + ', generate three creative briefs:\n\n' + analysisText;
+
+  return { systemPrompt, userMessage };
+}
+
 // ─── EXPORTS ─────────────────────────────────────────────────────────────────
-// Subsequent chunks add: buildBriefPrompt.
+// Subsequent chunks (A5b, A5c) replace the placeholders in buildBriefPrompt
+// with the v1 brand tone system (bit-exact) and the analyst-voice +
+// pattern-grounded output rules.
 
 export {
   PATTERNS_JSON_DELIMITER,
@@ -638,7 +758,9 @@ export {
   formatCreative,
   formatCreativeHistory,
   formatFormatAggregations,
+  formatCreativePatterns,
   buildAnalysisPrompt,
   buildCreativeReasoningPrompt,
   buildCreativeStructuringPrompt,
+  buildBriefPrompt,
 };
